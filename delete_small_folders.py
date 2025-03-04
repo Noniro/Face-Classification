@@ -91,3 +91,4 @@ if __name__ == "__main__":
 
     # Call the function
     delete_small_folders(dataset_path, min_photos=9)
+    print ("galgay")
