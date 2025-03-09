@@ -1,320 +1,222 @@
 import os
-import numpy as np
-import matplotlib.pyplot as plt
-from PIL import Image
-import tensorflow as tf
-from tensorflow.keras import layers, models
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from sklearn.model_selection import train_test_split
 import cv2
-import json
+import numpy as np
+import tensorflow as tf
+import matplotlib.pyplot as plt
+import sys
+
+# Alternative imports that work better with PyCharm
+keras = tf.keras
+Sequential = tf.keras.Sequential
+Conv2D = tf.keras.layers.Conv2D
+MaxPooling2D = tf.keras.layers.MaxPooling2D
+Flatten = tf.keras.layers.Flatten
+Dense = tf.keras.layers.Dense
+Dropout = tf.keras.layers.Dropout
+BatchNormalization = tf.keras.layers.BatchNormalization
+EarlyStopping = tf.keras.callbacks.EarlyStopping
+ModelCheckpoint = tf.keras.callbacks.ModelCheckpoint
+ReduceLROnPlateau = tf.keras.callbacks.ReduceLROnPlateau
+Adam = tf.keras.optimizers.Adam
+ImageDataGenerator = tf.keras.preprocessing.image.ImageDataGenerator
+
+# Verify TensorFlow and Keras versions
+print(f"TensorFlow version: {tf.__version__}")
+print(f"Keras version: {tf.keras.__version__}")
+
+# Get the current script directory
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)  # Go up one level to Face-Classification
+sys.path.append(parent_dir)  # Add parent directory to path
+
+# Import the utility functions
+try:
+    from utils.data_loader import load_data
+    from utils.data_splitter import split_data
+
+    print("Successfully imported from utils package")
+except ImportError:
+    # Fallback to direct module import
+    utils_dir = os.path.join(parent_dir, 'utils')
+    sys.path.append(utils_dir)
+    import data_loader
+    import data_splitter
+
+    load_data = data_loader.load_data
+    split_data = data_splitter.split_data
+    print("Using fallback direct module imports")
 
 # Set random seed for reproducibility
 np.random.seed(42)
 tf.random.set_seed(42)
 
+# Define paths
+dataset_path = os.path.join(parent_dir, 'Data-peopleFaces')  # Path to people faces dataset
 
-def load_dataset(root_path, img_size=(62, 47)):
-    """
-    Load images from LFW dataset directories where each directory name is a class label.
-    Returns images, labels, and a mapping from label indices to class names.
-    """
-    images = []
-    labels = []
-    class_names = []
+# Load the data using the provided utility
+print(f"Loading data from: {dataset_path}")
+X, y, label_dict = load_data(dataset_path)
+print(f"Loaded {len(X)} images with {len(label_dict)} classes")
+print(f"Image shape: {X[0].shape}")
 
-    # Get sorted list of directories to ensure consistent class indices
-    person_folders = sorted([d for d in os.listdir(root_path)
-                             if os.path.isdir(os.path.join(root_path, d))])
+# Split the data into training and testing sets
+X_train, X_test, y_train_cat, y_test_cat = split_data(X, y)
+print(f"Training set: {X_train.shape}, {y_train_cat.shape}")
+print(f"Testing set: {X_test.shape}, {y_test_cat.shape}")
 
-    # Create mapping from class index to class name
-    class_to_idx = {name: i for i, name in enumerate(person_folders)}
-    idx_to_class = {i: name for name, i in class_to_idx.items()}
+# Data augmentation for training
+datagen = ImageDataGenerator(
+    rotation_range=20,
+    width_shift_range=0.2,
+    height_shift_range=0.2,
+    horizontal_flip=True,
+    zoom_range=0.2,
+    shear_range=0.2,
+    fill_mode='nearest'
+)
 
-    for person_folder in person_folders:
-        person_path = os.path.join(root_path, person_folder)
-        class_names.append(person_folder)
-
-        for img_file in os.listdir(person_path):
-            img_path = os.path.join(person_path, img_file)
-            if not os.path.isfile(img_path) or not img_path.lower().endswith(('.jpg', '.jpeg', '.png')):
-                continue
-
-            try:
-                # Load and preprocess image
-                img = Image.open(img_path).convert('RGB')
-                img = img.resize(img_size)
-                img_array = np.array(img) / 255.0  # Normalize to [0,1]
-
-                images.append(img_array)
-                labels.append(class_to_idx[person_folder])
-            except Exception as e:
-                print(f"Error loading {img_path}: {e}")
-
-    return np.array(images), np.array(labels), idx_to_class
+datagen.fit(X_train)
 
 
+# CNN Architecture for face recognition
 def build_cnn_model(input_shape, num_classes):
-    """
-    Build a CNN model for facial classification that works with 62x47 images.
-    """
-    model = models.Sequential([
-        # First convolutional block
-        layers.Conv2D(32, (3, 3), activation='relu', padding='same', input_shape=input_shape),
-        layers.BatchNormalization(),
-        layers.MaxPooling2D((2, 2)),
+    model = Sequential([
+        # First Convolutional Block
+        Conv2D(32, (3, 3), activation='relu', padding='same', input_shape=input_shape),
+        BatchNormalization(),
+        Conv2D(32, (3, 3), activation='relu', padding='same'),
+        BatchNormalization(),
+        MaxPooling2D((2, 2)),
+        Dropout(0.25),
 
-        # Second convolutional block
-        layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
-        layers.BatchNormalization(),
-        layers.MaxPooling2D((2, 2)),
+        # Second Convolutional Block
+        Conv2D(64, (3, 3), activation='relu', padding='same'),
+        BatchNormalization(),
+        Conv2D(64, (3, 3), activation='relu', padding='same'),
+        BatchNormalization(),
+        MaxPooling2D((2, 2)),
+        Dropout(0.25),
 
-        # Third convolutional block
-        layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
-        layers.BatchNormalization(),
-        layers.MaxPooling2D((2, 2)),
+        # Third Convolutional Block
+        Conv2D(128, (3, 3), activation='relu', padding='same'),
+        BatchNormalization(),
+        Conv2D(128, (3, 3), activation='relu', padding='same'),
+        BatchNormalization(),
+        MaxPooling2D((2, 2)),
+        Dropout(0.25),
 
-        # Flatten and dense layers
-        layers.Flatten(),
-        layers.Dense(256, activation='relu'),
-        layers.Dropout(0.5),  # Prevent overfitting
-        layers.Dense(num_classes, activation='softmax')
+        # Flatten and Dense Layers
+        Flatten(),
+        Dense(512, activation='relu'),
+        BatchNormalization(),
+        Dropout(0.5),
+        Dense(256, activation='relu'),
+        BatchNormalization(),
+        Dropout(0.5),
+        Dense(num_classes, activation='softmax')
     ])
-
-    # Compile the model
-    model.compile(
-        optimizer='adam',
-        loss='sparse_categorical_crossentropy',
-        metrics=['accuracy']
-    )
 
     return model
 
 
-def train_model(dataset_path, img_size=(62, 47), batch_size=32, epochs=20, validation_split=0.2):
-    """
-    Train the CNN model and return the trained model and class mapping.
-    """
-    # Load dataset
-    print("Loading dataset...")
-    X, y, idx_to_class = load_dataset(dataset_path, img_size)
+# Get the input shape from the training data
+input_shape = X_train[0].shape
+num_classes = y_train_cat.shape[1]
 
-    # Split into train and validation sets
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=validation_split, stratify=y, random_state=42)
+# Build and compile the model
+model = build_cnn_model(input_shape, num_classes)
+model.compile(
+    optimizer=Adam(learning_rate=0.001),
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
 
-    print(f"Training with {len(X_train)} images, validating with {len(X_val)} images")
-    print(f"Number of classes: {len(idx_to_class)}")
-    print(f"Image shape: {X_train[0].shape}")
+# Display model summary
+model.summary()
 
-    # Data augmentation for training
-    datagen = ImageDataGenerator(
-        rotation_range=15,
-        width_shift_range=0.1,
-        height_shift_range=0.1,
-        zoom_range=0.1,
-        horizontal_flip=True,
-        fill_mode='nearest'
-    )
+# Define callbacks for training
+callbacks = [
+    EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
+    ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=1e-6),
+    ModelCheckpoint('best_face_model.h5', monitor='val_accuracy', save_best_only=True, mode='max')
+]
 
-    # Build the model
-    input_shape = X_train[0].shape
-    model = build_cnn_model(input_shape, len(idx_to_class))
+# Train the model with data augmentation
+batch_size = 32
+epochs = 50
 
-    # Model summary
-    model.summary()
+history = model.fit(
+    datagen.flow(X_train, y_train_cat, batch_size=batch_size),
+    epochs=epochs,
+    validation_data=(X_test, y_test_cat),
+    callbacks=callbacks
+)
 
-    # Early stopping to prevent overfitting
-    early_stopping = tf.keras.callbacks.EarlyStopping(
-        monitor='val_loss',
-        patience=5,
-        restore_best_weights=True
-    )
-
-    # Learning rate reduction on plateau
-    reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(
-        monitor='val_loss',
-        factor=0.2,
-        patience=3,
-        min_lr=1e-6
-    )
-
-    # Train the model
-    print("Training model...")
-    history = model.fit(
-        datagen.flow(X_train, y_train, batch_size=batch_size),
-        steps_per_epoch=len(X_train) // batch_size,
-        epochs=epochs,
-        validation_data=(X_val, y_val),
-        callbacks=[early_stopping, reduce_lr]
-    )
-
-    # Evaluate the model
-    test_loss, test_acc = model.evaluate(X_val, y_val, verbose=2)
-    print(f"\nValidation accuracy: {test_acc:.4f}")
-
-    # Plot training history
-    plot_training_history(history)
-
-    return model, idx_to_class, (X_val, y_val)
+# Evaluate the model on the test set
+test_loss, test_accuracy = model.evaluate(X_test, y_test_cat)
+print(f"Test accuracy: {test_accuracy:.4f}")
+print(f"Test loss: {test_loss:.4f}")
 
 
+# Plot the training history
 def plot_training_history(history):
-    """
-    Plot training and validation accuracy/loss.
-    """
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    plt.figure(figsize=(12, 4))
 
     # Plot accuracy
-    ax1.plot(history.history['accuracy'])
-    ax1.plot(history.history['val_accuracy'])
-    ax1.set_title('Model Accuracy')
-    ax1.set_ylabel('Accuracy')
-    ax1.set_xlabel('Epoch')
-    ax1.legend(['Train', 'Validation'], loc='upper left')
+    plt.subplot(1, 2, 1)
+    plt.plot(history.history['accuracy'], label='Training Accuracy')
+    plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+    plt.title('Model Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
 
     # Plot loss
-    ax2.plot(history.history['loss'])
-    ax2.plot(history.history['val_loss'])
-    ax2.set_title('Model Loss')
-    ax2.set_ylabel('Loss')
-    ax2.set_xlabel('Epoch')
-    ax2.legend(['Train', 'Validation'], loc='upper left')
+    plt.subplot(1, 2, 2)
+    plt.plot(history.history['loss'], label='Training Loss')
+    plt.plot(history.history['val_loss'], label='Validation Loss')
+    plt.title('Model Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
 
     plt.tight_layout()
     plt.savefig('training_history.png')
-    plt.show()
+    # plt.show()
 
 
-def process_test_image(image_path, target_size=(62, 47)):
-    """
-    Process a test image for classification:
-    - Resize to target dimensions (62x47)
-    - Normalize pixel values to 0.0-1.0 range
-    - Handle different image formats
-
-    Returns processed image ready for model input
-    """
-    try:
-        # Load image using OpenCV
-        if isinstance(image_path, str):
-            img = cv2.imread(image_path)
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
-        else:
-            # If already a numpy array
-            img = image_path
-            if len(img.shape) == 3 and img.shape[2] == 4:  # Handle RGBA
-                img = img[:, :, :3]
-
-        # Resize image to 62x47 as specified for the LFW dataset
-        img = cv2.resize(img, target_size)
-
-        # Normalize pixel values to [0,1]
-        img = img.astype(np.float32) / 255.0
-
-        return img
-
-    except Exception as e:
-        print(f"Error processing test image: {e}")
-        return None
+# Plot the training history
+plot_training_history(history)
 
 
-def classify_new_image(model, idx_to_class, image_path, img_size=(62, 47)):
-    """
-    Classify a new image using the trained model.
-    """
-    try:
-        # Process the image
-        if isinstance(image_path, str):
-            processed_img = process_test_image(image_path, img_size)
-        else:
-            # If it's already a numpy array
-            processed_img = image_path if image_path.max() <= 1.0 else image_path / 255.0
+# Function to predict a person's identity
+def predict_person(model, image, label_dict):
+    # Ensure image is in the right format
+    if image.shape != X_train[0].shape:
+        image = cv2.resize(image, (X_train[0].shape[1], X_train[0].shape[0]))
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image = image.astype('float32') / 255.0
 
-        # Add batch dimension
-        img_batch = np.expand_dims(processed_img, axis=0)
+    # Reshape for model input
+    image = np.expand_dims(image, axis=0)
 
-        # Make prediction
-        predictions = model.predict(img_batch)
-        predicted_class_idx = np.argmax(predictions[0])
-        confidence = predictions[0][predicted_class_idx]
+    # Get prediction
+    prediction = model.predict(image)[0]
+    predicted_class = np.argmax(prediction)
+    confidence = prediction[predicted_class]
 
-        person_name = idx_to_class[predicted_class_idx]
+    # Get the person's name
+    person_name = label_dict[predicted_class]
 
-        # Display results
-        print(f"Predicted person: {person_name}")
-        print(f"Confidence: {confidence:.4f}")
-
-        # Show top 5 predictions
-        top_5_indices = np.argsort(predictions[0])[-5:][::-1]
-        print("\nTop 5 predictions:")
-        for idx in top_5_indices:
-            print(f"{idx_to_class[idx]}: {predictions[0][idx]:.4f}")
-
-        # Display the image with prediction
-        plt.figure(figsize=(4, 6))
-        plt.imshow(processed_img)
-        plt.title(f"Predicted: {person_name}\nConfidence: {confidence:.4f}")
-        plt.axis('off')
-        plt.show()
-
-        return person_name, confidence, predictions[0]
-
-    except Exception as e:
-        print(f"Error classifying image: {e}")
-        return None, 0.0, None
+    return person_name, confidence
 
 
-def main():
-    # Path to your dataset
-    dataset_path = r"C:\Users\HP\Downloads\archive\lfw-funneled\lfw_funneled"
+# Save the trained model
+model.save('face_classification_model.h5')
+print("Model saved as 'face_classification_model.h5'")
 
-    # Train the model with the LFW specific dimensions (62x47)
-    model, idx_to_class, val_data = train_model(
-        dataset_path,
-        img_size=(62, 47),
-        batch_size=32,
-        epochs=25
-    )
-
-    # Save the model and class mapping
-    model.save('lfw_face_classification_model.h5')
-
-    # Save class mapping to file
-    with open('lfw_class_mapping.json', 'w') as f:
-        json.dump({str(k): v for k, v in idx_to_class.items()}, f)
-
-    print("Model and class mapping saved.")
-
-    # Test the model on some validation images
-    X_val, y_val = val_data
-    num_test = min(5, len(X_val))
-    test_indices = np.random.choice(len(X_val), num_test, replace=False)
-
-    for idx in test_indices:
-        test_img = X_val[idx]
-        true_label = idx_to_class[y_val[idx]]
-        print(f"\nTrue label: {true_label}")
-
-        # Test classification
-        classify_new_image(model, idx_to_class, test_img)
-
-
-def load_saved_model(model_path='lfw_face_classification_model.h5',
-                     mapping_path='lfw_class_mapping.json'):
-    """
-    Load a previously saved model and class mapping.
-    """
-    # Load model
-    model = tf.keras.models.load_model(model_path)
-
-    # Load class mapping
-    with open(mapping_path, 'r') as f:
-        class_mapping = json.load(f)
-        # Convert string keys back to integers
-        idx_to_class = {int(k): v for k, v in class_mapping.items()}
-
-    return model, idx_to_class
-
-
-if __name__ == "__main__":
-    main()
+# Example of how to use the model for prediction
+# You would typically load a new image here
+# sample_image = cv2.imread('path_to_new_image.jpg')
+# person_name, confidence = predict_person(model, sample_image, label_dict)
+# print(f"Predicted person: {person_name} with confidence: {confidence:.2f}")
