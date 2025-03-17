@@ -9,7 +9,7 @@ from sklearn.metrics import accuracy_score, classification_report
 from sklearn.decomposition import PCA
 
 # === Step 1: Define variable to control PCA ===
-USE_PCA = True  # Change to False if you don't want to use PCA
+USE_PCA = False  # Change to False if you don't want to use PCA
 USE_HOG = True  # Change to True if you want to use HOG
 CHECK = False
 
@@ -35,6 +35,8 @@ def load_images(root_dir, img_size=(64, 64)):
             continue  # Skip irrelevant files
 
         for filename in os.listdir(folder_path):
+
+
             img_path = os.path.join(folder_path, filename)
             img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)  # Image in grayscale
             if img is None:
